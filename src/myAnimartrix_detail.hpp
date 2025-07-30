@@ -409,10 +409,11 @@ FASTLED_USING_NAMESPACE
         enum class AdjustmentOperator {
             ADD,      // +
             SUBTRACT, // -
-            MULTIPLY  // *
+            MULTIPLY,  // *
+            DIVIDE      // /
         };
 
-        // Core variant type - can be a float value, pointer to float, pointer to float array, or lambda function
+        // Core variant type - can be a float value, pointer to float, or pointer to float array
         using CoreVariant = std::variant<float, float*, float**, std::function<float()>>;
                 
         // Adjustment structure with core, optional index, and operator
@@ -433,11 +434,6 @@ FASTLED_USING_NAMESPACE
             Adjustment(float* array, uint8_t arrayIndex, AdjustmentOperator operation = AdjustmentOperator::ADD)
                 : core(array), index(arrayIndex), op(operation) {}
             
-            // Constructor with lambda function
-            Adjustment(std::function<float()> func, AdjustmentOperator operation = AdjustmentOperator::ADD)
-                : core(func), op(operation) {}
-
-           
            // Get the core value as float
             float getCoreValue() const {
                 return std::visit([this](const auto& value) -> float {
@@ -461,13 +457,7 @@ FASTLED_USING_NAMESPACE
                         }
                         return 0.0f;
                     }
-                    else if constexpr (std::is_same_v<T, std::function<float()>>) {
-                        // Execute the lambda function
-                        if (value) {
-                            return value();
-                        }
-                        return 0.0f;
-                    }
+
                     else {
                         return 0.0f; // Fallback
                     }
@@ -480,117 +470,56 @@ FASTLED_USING_NAMESPACE
         //**************************************************************************************** 
         // PARAMETER CLASS - each parameter returns a float
        
-        // Base variant type for runtime flexibility
-        using BaseVariant = std::variant<float, float*, float**, std::function<float()>>;
-        
         class Parameter {
 
           public:
-            BaseVariant base;
+            //BaseVariant base;
             std::vector<Adjustment> adjustment;
 
-            // Default constructor - base defaults to 0.0f
-            Parameter() : base(0.0f) {}
+            // Default constructor - defaults to 0.0f
+            Parameter() 
+                : adjustment(0.0f) {}
             
-            // Constructor with float base value
-            explicit Parameter(float baseValue) : base(baseValue) {}
-            
-            // Constructor with pointer to float base
-            explicit Parameter(float* basePtr) : base(basePtr) {}
-            
-            // New constructor for lambda functions
-            explicit Parameter(std::function<float()> func) : base(func) {}
+            // Constructor one or more adjustments
+            Parameter(const std::vector<Adjustment>& adjs)
+                : adjustment(adjs) {}
 
-            // Constructor with base and adjustments
-            Parameter(float baseValue, const std::vector<Adjustment>& adjs)
-                : base(baseValue), adjustment(adjs) {}
-            
-            Parameter(float* basePtr, const std::vector<Adjustment>& adjs)
-                : base(basePtr), adjustment(adjs) {}
-            
-            // Get base value as float
-            float getBaseValue() const {
-                return std::visit([](const auto& value) -> float {
-                    using T = std::decay_t<decltype(value)>;
-                    
-                    if constexpr (std::is_same_v<T, float>) {
-                        return value;
-                    }
-                    else if constexpr (std::is_same_v<T, float*>) {
-                        if (value != nullptr) {
-                            return *value;
-                        }
-                        return 0.0f;
-                    }
-                    else if constexpr (std::is_same_v<T, float**>) {
-                        if (value != nullptr && *value != nullptr) {
-                            return **value;
-                        }
-                        return 0.0f;
-                    }
-                    else if constexpr (std::is_same_v<T, std::function<float()>>) {
-                        // Execute the lambda function
-                        if (value) {
-                            return value();
-                        }
-                        return 0.0f;
-                    }
-                    else {
-                        return 0.0f; // Fallback
-                    }
-                }, base);
-            }
-            
-            // Main function - returns the computed float value
             float getValue() const {
-            
-                // Start with base value
-                float result = getBaseValue();
-                if (debug) {
-                    Serial.print("    getValue() base: "); Serial.println(result);
-                }
-                
-                // Apply adjustments sequentially
-                for (size_t i = 0; i < adjustment.size(); i++) {
-                    float adjValue = adjustment[i].getCoreValue();
-                    float oldResult = result;
-                    
-                    if (debug) {
-                        Serial.print("    Adjustment["); Serial.print(i); Serial.print("] value: "); Serial.println(adjValue);
-                    }
+                            
+                // Start with core value
+                float result = adjustment[0].getCoreValue();
 
+                // Negate if indicated 
+                if (adjustment[0].op == AdjustmentOperator::SUBTRACT) {
+                    result = -result;  
+                }
+
+                // Apply adjustments sequentially
+                
+                for (size_t i = 0; i < adjustment.size(); i++) {
+                    
+                    float adjValue = adjustment[i].getCoreValue(); // getCoreValue includes index if present
+         
                     switch (adjustment[i].op) {
                         case AdjustmentOperator::ADD:
                             result += adjValue;
-                            if (debug) {
-                                Serial.print("    "); Serial.print(oldResult); Serial.print(" + "); Serial.print(adjValue); 
-                                Serial.print(" = "); Serial.println(result);
-                            }
                             break;
                         case AdjustmentOperator::SUBTRACT:
                             result -= adjValue;
-                            if (debug) {
-                                Serial.print("    "); Serial.print(oldResult); Serial.print(" + "); Serial.print(adjValue); 
-                                Serial.print(" = "); Serial.println(result);
-                            }
                             break;
                         case AdjustmentOperator::MULTIPLY:
                             result *= adjValue;
-                            if (debug) {
-                                Serial.print("    "); Serial.print(oldResult); Serial.print(" + "); Serial.print(adjValue); 
-                                Serial.print(" = "); Serial.println(result);
-                            }
+                            break;
+                        case AdjustmentOperator::DIVIDE:
+                            result /= adjValue;
                             break;
                     }
-                }
-                
-                if (debug) {
-                    Serial.print("    getValue() final: "); Serial.println(result);
                 }
                 
                 return result;
             }
 
+            /*
             // Utility methods
             void setBase(float newBase) { base = newBase; }
             void setBase(float* newBasePtr) { base = newBasePtr; }
@@ -608,6 +537,7 @@ FASTLED_USING_NAMESPACE
             bool isBaseFunction() const {
                 return std::holds_alternative<std::function<float()>>(base);
             }
+            */
             
         }; // Parameter class
                 
@@ -635,7 +565,10 @@ FASTLED_USING_NAMESPACE
             
             // Array access to the same parameters
             Parameter* parameter[11];
-            
+
+            // Vector to store/serve current Parameter values
+            std::vector<float> current = {0.0f, 0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f};
+
             // Constructor
             Layer() {
                 // Initialize parameter array to point to named parameters
@@ -660,7 +593,7 @@ FASTLED_USING_NAMESPACE
             }
             
             // Get all parameter values as floats
-            void getParameterValues(float values[1]) const {
+            void getParameterValues(float values[11]) const {
                 for (size_t i = 0; i < 11; ++i) {
                     values[i] = parameter[i]->getValue();
                 }
@@ -675,7 +608,7 @@ FASTLED_USING_NAMESPACE
             }
         }; // Layer class
 
-        //************************************************************/
+        //************************************************************
 
         Layer layer1;
         Layer layer2;
@@ -686,106 +619,89 @@ FASTLED_USING_NAMESPACE
         Layer* layer[5] = {&layer1, &layer2, &layer3, &layer4, &layer5};
 
 
+        float adjDistance(uint8_t i, float pixelDistance) {
+            
+            if (true /*defaultCoreVal*/ ) { return pixelDistance;}
+   
+            else {return layer[i]->parameter[0]->getValue(); 
+            
+            
 
-        float modFactorDistance(uint8_t i) {
-
-            if () {     // if there are any adjustments to default base,
-                        // then process them as applicable
-
-                // Look to see if there are any active adjustments
-
-                // if there are active static adjustments...
-
-
-                // if there are active dynamic adjustments...
-
-
-
-                // use getValue or another method to process
-                   
-                // layer[i]->distance_xy.getValue();
-
-
-            // return result     
             }
-
-            else {return 1.0f;}
-
-
 
         }
 
-        float modFactorAngle(uint8_t i) {
+        float adjAngle(uint8_t i, float pixelAngle, float pixelDistance) {
 
-            if () {     // if there are any adjustments to default base,
-                        // then process them as applicable
+            // start with the default base
+            float defaultBase = pixelAngle;
 
-                // Look to see if there are any active adjustments
+            if (false) {return defaultBase;}      // if !activeAdjustments[layer]
 
-                // if there are active static adjustments...
+            else {  //apply adjustments
 
+                float result = defaultBase 
+                    * 3                     // adjustment 1
+                    + move.radial[0]        // adjustment 2
+                    - pixelDistance;        // adjustment 3
+                                
+                return result;
 
-                // if there are active dynamic adjustments...
-
-
-
-                // use getValue or another method to process
-                   
-                // layer[i]->angle.getValue();
-
-
-            // return result     
             }
-
-            else {return 1.0f;}
-
-
-
         }
-
-/*
-                            animation.scale_x = layer[i]->scale_x.getValue();
+       
+        float currentScale_x(uint8_t i, float pixelDistance) {
+            
+            void postValue() {
+             
+            }
                         
-                            animation.scale_y = layer[i]->scale_y.getValue();
-                            animation.scale_z = layer[i]->scale_z.getValue();
-                            animation.offset_x = layer[i]->offset_x.getValue();
-                            animation.offset_y = layer[i]->offset_y.getValue();
-                            animation.offset_z = layer[i]->offset_z.getValue();
-                            animation.z = layer[i]->z.getValue();
-                            animation.low_limit = layer[i]->low_limit.getValue();
-                            animation.high_limit = layer[i]->high_limit.getValue();
+            // if dynamic
+                 layer[i]->current[2] = layer[i]->parameter[2]->getValue();;
 
-*/
-
-        
-        float currentScale_x(uint8_t i) {
-
-            return 0.0f;
-        
-        };
-        float currentScale_y(uint8_t i) {
-            return 0.0f;
-        };
-        float currentScale_y(uint8_t i) {
-            return 0.0f;
-        };
-        float currentOffset_x(uint8_t i) {
-           // implement the method here
-           // if it's a constant, return it
-
-           // if it's based on an oscillator/modulator,
-           // then return that value directly 
+            //else if static
+            
+                //if hasChanged == true
+                 layer[i]->current[2] = layer[i]->parameter[2]->getValue();;
+                // hasChanged = false;
 
 
+
+
+
+
+
+
+        };
+
+        float currentScale_y(uint8_t i, float pixelDistance) {
+            return 0.1f;
+        };
+
+        float currentScale_z(uint8_t i, float pixelDistance) {
+            return 0.1f;
+        };
+
+        float currentOffset_x(uint8_t i, float pixelDistance) {
+           
+            float defaultBase = 0.0f;
+            if (false) {return defaultBase;}
+
+            else {
+                float result = move.linear[0];
+                return result;
+            }
+        };
+       
+        float currentOffset_y(uint8_t i, float pixelDistance) {
             return 0.0f;
         };
-        float currentOffset_y(uint8_t i) {
+       
+        float currentOffset_z(uint8_t i, float pixelDistance) {
             return 0.0f;
         };
-        float currentOffset_z(uint8_t i) {
-            return 0.0f;
-        };
-        float currentZ(uint8_t i) {
+       
+        float currentZ(uint8_t i, float pixelDistance) {
             return 0.0f;
         };
         
@@ -793,45 +709,25 @@ FASTLED_USING_NAMESPACE
         float currentHigh_Limit(uint8_t i) { return 1.0f; };
 
 
-
         // *************** USE BLE HANDLERS TO PUSH CHANGES ONLY WHEN NEEDED
-
-        /*
-            //EXAMPLE state of UI input:
-            layer1.layerActive = true;
-            layer1.distance_xy.setBase([&]() { return distance[x][y]; });
-            layer1.distance_xy.adjustment.push_back(Adjustment(.25f, AdjustmentOperator::MULTIPLY));
-           
-            layer1.angle.setBase([&]() { return polar_theta[x][y]; });
-            layer1.angle.adjustment.push_back(Adjustment(3.0f, AdjustmentOperator::MULTIPLY));
-            layer1.angle.adjustment.push_back(Adjustment(move.radial, 0, AdjustmentOperator::ADD));
-            layer1.angle.adjustment.push_back(Adjustment([&]() { return distance[x][y]; }, AdjustmentOperator::SUBTRACT));
-           
-            layer1.scale_x.base = .1f;  
-            layer1.scale_y.base = .1f;
-            layer1.scale_z.base = .1f;
-            layer1.offset_x.base = &move.linear[0];
-            layer1.high_limit.base = 1.0f;
-        */
-
 
         // BLE - Set variable values directly? Or send instruction messages?
 
             // special/dedicated characteristic?
 
-
             // can moderate the adjustment count only when needed 
-
 
             // all dynamic adjustments point directly to the underlying timer; they don't pass values from one place to another
 
+
+            // handling some ble messages will include setting certain bools (e.g., hasChanged, defaultVal)
 
     
         //********************************************************************************************************************
         // EFFECTS ***********************************************************************************************************
 
         void Test() {
-            Serial.println("Test started");
+            //Serial.println("Test started");
             
             int x = 0, y = 0;
 
@@ -846,31 +742,30 @@ FASTLED_USING_NAMESPACE
 
             calculate_oscillators(timings);
 
-
-
             //draw a frame
             for (x = 0; x < num_x; x++) {
                 for (y = 0; y < num_y; y++) {
                     
                     // draw layers 
-                    for (uint8_t i = 0; i < 5 ; i++) {
+                                        
+                    for (uint8_t i = 0; i < 1 ; i++) {
                 
-                        if(layer[i]->layerActive) {
-                        
-                            float currentDistance = distance[x][y];
-                            float currentAngle = polar_theta[x][y];
+                        //if(layer[i]->layerActive) {
+                        if(true) {
+
+                            float pixelDistance = distance[x][y];
+                            float pixelAngle = polar_theta[x][y];
                             
-                            // need to adjust to allow for + as alternate operator
-                            animation.dist = currentDistance * modFactorDistance(i) ; 
-                            animation.angle = currentAngle * modFactorAngle(i);
-						    animation.scale_x = currentScale_x(i);
-							animation.scale_y = currentScale_y(i);
-                            animation.scale_z = currentScale_y(i);
-                            animation.offset_x = currentOffset_x(i);
-                            animation.offset_y = currentOffset_y(i);
-                            animation.offset_z = currentOffset_z(i);
-                            animation.z = currentZ(i);
-                            animation.low_limit =currentLow_Limit(i);
+                            animation.dist = adjDistance(i, pixelDistance); 
+                            animation.angle = adjAngle(i, pixelAngle, pixelDistance);
+						    animation.scale_x = currentScale_x(i, pixelDistance);
+							animation.scale_y = currentScale_y(i, pixelDistance);
+                            animation.scale_z = currentScale_z(i, pixelDistance);
+                            animation.offset_x = currentOffset_x(i, pixelDistance);
+                            animation.offset_y = currentOffset_y(i, pixelDistance);
+                            animation.offset_z = currentOffset_z(i, pixelDistance);
+                            animation.z = currentZ(i, pixelDistance);
+                            animation.low_limit = currentLow_Limit(i);
                             animation.high_limit = currentHigh_Limit(i);
                             
                             show[i] = render_value(animation);
@@ -896,9 +791,8 @@ FASTLED_USING_NAMESPACE
 					animation.z = 0;
 					
                     show[0] = render_value(animation) ;
-
                     */
-
+                  
                     pixel.red = show[0];
                     pixel.green = show[0]/2;
                     pixel.blue = show[0]/3;
@@ -909,7 +803,7 @@ FASTLED_USING_NAMESPACE
                 }
             }
             
-            Serial.println("Test completed");
+            //Serial.println("Test completed");
         } // Test()
 
         //*******************************************************************************
