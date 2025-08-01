@@ -17,6 +17,8 @@
 //#include <memory>
 #include <variant>
 
+#include <Printable.h>
+
 #ifndef FL_ANIMARTRIX_USES_FAST_MATH
 #define FL_ANIMARTRIX_USES_FAST_MATH 1
 #endif
@@ -33,7 +35,7 @@ FL_OPTIMIZATION_LEVEL_O3_BEGIN
 #define PI 3.1415926535897932384626433832795
 #endif
 
-#define timeFactors 10
+#define timeFactors 5
 
 namespace animartrix_detail {
 
@@ -133,7 +135,7 @@ namespace animartrix_detail {
 
         bool serpentine;
         
-        float show[10] = {0,1,2,3,4,5,6,7,8,9};
+        float show[5] = {0,1,2,3,4};
 
         ParameterSet animation;         // all animation parameters in one place (an instance of the ParameterSet class)
         timingMap timings;              // all speed settings in one place (an instance of the timingMap structure)
@@ -270,19 +272,42 @@ namespace animartrix_detail {
                 // continously rising value, returns 0 to max_float
                 move.linear[i] = 
                     (runtime + timings.offset[i]) * timings.ratio[i];
+                if (debug){
+                    Serial.print("move.linear[");
+                    Serial.print(i);
+                    Serial.print("] = ");
+                    Serial.println(move.linear[i]);
+                }
 
                 // angle values for continous rotation, returns 0 to 2 * PI
                 move.radial[i] = 
                     fmodf(move.linear[i], 2 * PI); 
+                if (debug){
+                    Serial.print("move.radial[");
+                    Serial.print(i);
+                    Serial.print("] = ");
+                    Serial.println(move.radial[i]);
+                }
 
                 // directional values, returns -1 to 1
                 move.directional[i] = 
                     FL_SIN_F(move.radial[i]); 
+                if (debug){
+                    Serial.print("move.directional[");
+                    Serial.print(i);
+                    Serial.print("] = ");
+                    Serial.println(move.directional[i]);
+                }
 
                 // noise-based angle adjustment value, returns 0 to 2 * PI
                 move.noise_angle[i] =
                     PI * (1 + pnoise(move.linear[i], 0, 0));
-            
+                if (debug){
+                    Serial.print("move.noise_angle[");
+                    Serial.print(i);
+                    Serial.print("] = ");
+                    Serial.println(move.noise_angle[i]);
+                }
             }
         }
 
@@ -342,12 +367,12 @@ namespace animartrix_detail {
         // COMPONENT ARCHITECTURE ********************************************************************************************
 
         //**************************************************************************************** 
-        // ELEMENT STRUCTURE 
+        // Element Class 
         // Elements are instructions for how to calculate a Parameter
 
         // Elements include an operator, a type, a optional reference, an optional value, and an optional index
-        // reference is used to identify which variable or array to reference
-        // value is used to provide a float for a directly-entered constant
+        // reference is used to identify which variable or variable array to reference
+        // value is used to provide a directlty-entered float value
         // index is used for the array variables (i.e., modulators)  
 
 
@@ -365,7 +390,8 @@ namespace animartrix_detail {
         };
 
         enum class ElementReference {
-            moveLinear = 0,
+            null = 0,
+            moveLinear,
             moveRadial,
             moveDirectional,
             moveNoiseAngle,
@@ -375,7 +401,7 @@ namespace animartrix_detail {
             cTwist
         };
 
-        class Element {
+        class Element { 
           
           public:  
           
@@ -389,13 +415,26 @@ namespace animartrix_detail {
             Element(    ElementOperator operation = ElementOperator::ADD, 
                         ElementType type = ElementType::direct,
                         ElementReference ref = ElementReference::moveLinear,
-                        float value,
+                        float value = 0.0f,
                         uint8_t index = 0
                     )
                         : op(operation), type(type), ref(ref), value(value), index(index)  {}
 
+
+
+            /*virtual size_t printTo(Print& p) const {
+                size_t bytesWritten = 0;
+                bytesWritten += p.print("Operator: ");
+                bytesWritten += p.print(op);
+                bytesWritten += p.print(", Value: ");
+                bytesWritten += p.println(_value);
+                return bytesWritten;
+            }*/
+
+
         };// class Element
-                                        
+
+
         //**************************************************************************************** 
         // PARAMETER CLASS - each parameter returns a float
        
@@ -412,48 +451,6 @@ namespace animartrix_detail {
             // Constructor FOR one or more elements
             Parameter(const std::vector<Element>& adjs)
                 : element(adjs) {}
-
-            float getValue() const {
-                            
-                // Start with element[0] core value
-                float result = element[0].getCoreValue();
-
-                // Negate if indicated 
-                if (element[0].op == ElementOperator::SUBTRACT) {
-                    result = -result;  
-                }
-
-                // Apply additional elements sequentially
-                
-                for (size_t i = 1; i < element.size(); i++) {
-                    
-                    float adjValue = element[i].getCoreValue(); // getCoreValue includes index if present
-                                        
-                    switch (element[i].op) {
-                        case ElementOperator::ADD:
-                            result += adjValue;
-                            break;
-                        case ElementOperator::SUBTRACT:
-                            result -= adjValue;
-                            break;
-                        case ElementOperator::MULTIPLY:
-                            result *= adjValue;
-                            break;
-                        case ElementOperator::DIVIDE:
-                            result /= adjValue;
-                            break;
-                    }
-                }
-                
-                return result;
-            }
-                        
-            bool isDynamic() const {
-                for (size_t i = 0; i < element.size(); i++) {
-                    if (!element[i].isStatic()) {return true;}
-                }
-                return false;
-            }
 
         }; // Parameter class
                 
@@ -500,28 +497,6 @@ namespace animartrix_detail {
                 parameter[9] = &low_limit;
                 parameter[10] = &high_limit;
             }
-            
-            // Get parameter count (always 11)
-            // change to count number of Parameters !=0 
-
-            static constexpr size_t getParameterCount() {
-                return 11;
-            }
-            
-            // Get all parameter values as floats
-            void getParameterValues(float values[11]) const {
-                for (size_t i = 0; i < 11; ++i) {
-                    values[i] = parameter[i]->getValue();
-                }
-            }
-            
-            // Get specific parameter value by index
-            float getParameterValue(size_t index) const {
-                if (index < 11) {
-                    return parameter[index]->getValue();
-                }
-                return 0.0f;
-            }
 
         }; // Layer class
 
@@ -535,23 +510,21 @@ namespace animartrix_detail {
                 
         Layer* layer[5] = {&layer1, &layer2, &layer3, &layer4, &layer5};
 
-         //************************************************************
+        //************************************************************
         
         void createLayer(uint8_t i, float pixelDistance, float pixelAngle) {
-        
-            //for each pixel, generate a show[i] value for the current layer[i]
-                
+          
+            float result = 0.0f;
+            float base;           
+           
             for (uint8_t j = 0; j < 11; j++) { // for each parameter
             
-                float result = 0.0f;
-                float base;
-
                 for (uint8_t k = 0; k < layer[i]->parameter[j]->element.size(); k++) { // for each element
                 
                     switch (layer[i]->parameter[j]->element[k].type) { // get the base value or reference variable
                         
                         case ElementType::direct:
-                            float base = layer[i]->parameter[j]->element[k].value;
+                            base = layer[i]->parameter[j]->element[k].value;
                             break;
                         
                         case ElementType::variable:
@@ -559,83 +532,91 @@ namespace animartrix_detail {
                             switch (layer[i]->parameter[j]->element[k].ref) {
 
                                 case ElementReference::pixelDistance:
-                                    float base = pixelDistance;
+                                    base = pixelDistance;
                                     break;
 
                                 case ElementReference::pixelAngle:
-                                    float base = pixelAngle;
+                                    base = pixelAngle;
                                     break;
+
+                                case ElementReference::cZoom:
+                                    base = cZoom;
+                                    break;
+
+                                case ElementReference::cTwist:
+                                    base = cTwist;
+                                    break;
+                                
+                                default:  break;                                
+
                             }
                         
                         case ElementType::array:
 
+                            uint8_t index = layer[i]->parameter[j]->element[k].index;
+
                             switch (layer[i]->parameter[j]->element[k].ref) {
 
-                                case ElementReference::moveLinear:
-                                    uint8_t index = layer[i]->parameter[j]->element[k].index;
+                                case ElementReference::moveLinear:{
                                     float base = move.linear[index];
-                                    break;
+                                }break;
 
-                                case ElementReference::moveRadial:
-                                    uint8_t index = layer[i]->parameter[j]->element[k].index;
+                                case ElementReference::moveRadial:{
                                     float base = move.radial[index];
-                                    break;
+                                }break;
 
-                                case ElementReference::moveDirectional:
-                                    uint8_t index = layer[i]->parameter[j]->element[k].index;
+                                case ElementReference::moveDirectional:{
                                     float base = move.directional[index];
-                                    break;
+                                }break;
 
-                                case ElementReference::moveNoiseAngle:
-                                    uint8_t index = layer[i]->parameter[j]->element[k].index;
+                                case ElementReference::moveNoiseAngle:{
                                     float base = move.noise_angle[index];
-                                    break;
+                                }break;
                             }
                     }
                     
-                // if the parameter has only one element [0])
-                if (layer[i]->parameter[j]->element.size() == 1) {
-                    
-                    if (layer[i]->parameter[j]->element[0].op == ElementOperator::SUBTRACT) {
-                        result = -base;
+                    // if the parameter has only one element [0])
+                    if (layer[i]->parameter[j]->element.size() == 1) {
+                        if (layer[i]->parameter[j]->element[0].op == ElementOperator::SUBTRACT) {
+                            result = -base;
+                        }
+                        else {result = base;}
                     }
-                    
-                    else {result = base;}
-                    
-                }
-                                
-                else {
-                
-                    switch (layer[i]->parameter[j]->element[k].op) {
-                        case ElementOperator::ADD:
-                            result += base;
-                            break;
-                        case ElementOperator::SUBTRACT:
-                            result -= base;
-                            break;
-                        case ElementOperator::MULTIPLY:
-                            result *= base;
-                            break;
-                        case ElementOperator::DIVIDE:
-                            result /= base;
-                            break;
+                                    
+                    else {
+                        switch (layer[i]->parameter[j]->element[k].op) {
+                            case ElementOperator::ADD:
+                                result += base;
+                                break;
+                            case ElementOperator::SUBTRACT:
+                                result -= base;
+                                break;
+                            case ElementOperator::MULTIPLY:
+                                result *= base;
+                                break;
+                            case ElementOperator::DIVIDE:
+                                result /= base;
+                                break;
+                        }
                     }
                 }
-
-                animation.layer[i]->param[j] = result;    
-        
-        }
+            }
             
-               // creating a layer means running an "animation" through "render_value(animation)" 
+            show[i] = result;    
+
+            // creating a layer means running an "animation" through "render_value(animation)" 
             // i.e., applying set of 11 Parameters to each pixel
             // result is a show[i] for layer[i] 
         
             //show[i] = render_value(animation);
         
-        }
+        } // createLayer()
+        
+        
         
         void composeFrame( uint8_t x, uint8_t y) {
 
+          /*
             // composing a Frame means setting the RGB value for each pixel through a specified mapping/application of 
             // Layer values to each color channel
 
@@ -646,17 +627,11 @@ namespace animartrix_detail {
             pixel = rgb_sanity_check(pixel);
             
             setPixelColorInternal(x, y, pixel);
-
+            */
         }
 
+        void getTestInputs() {
 
-        //********************************************************************************************************************
-        // PATTERN GENERATOR *************************************************************************************************
-
-        // each pass through main loop, show the Frame
-        
-        void Pattern() { 
-          
             timings.master_speed = 0.01;
             
             timings.ratio[0] = 0.1;
@@ -667,9 +642,51 @@ namespace animartrix_detail {
             timings.offset[1] = 10;
             timings.offset[2] = 20;
             timings.offset[3] = 30;
-            
-            calculate_modulators(timings);
+           
+            layer[0]->parameter[0]->element[0] = Element(ElementOperator::ADD, ElementType::variable, ElementReference::pixelDistance, 0, 0);
+            layer[0]->parameter[0]->element[1] = Element(ElementOperator::DIVIDE, ElementType::direct, ElementReference::null, 4.0f, 0);
+ 
+            layer[0]->parameter[1]->element[0] = Element(ElementOperator::ADD,ElementType::variable, ElementReference::pixelAngle, 0, 0);
+            layer[0]->parameter[1]->element[1] = Element(ElementOperator::MULTIPLY,ElementType::direct, ElementReference::null, 3.0f, 0);
+            layer[0]->parameter[1]->element[2] = Element(ElementOperator::ADD,ElementType::array, ElementReference::moveRadial, 0, 0);
+            layer[0]->parameter[1]->element[3] = Element(ElementOperator::SUBTRACT,ElementType::variable, ElementReference::pixelDistance, 0, 0);
+           
+            layer[0]->parameter[2]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 0.1f, 0);  
+            layer[0]->parameter[3]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 0.1f, 0);
+            layer[0]->parameter[4]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 0.1f, 0);
+            layer[0]->parameter[5]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 0.0f, 0);
+            layer[0]->parameter[6]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 0.0f, 0);
+            layer[0]->parameter[7]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 0.0f, 0);
+            layer[0]->parameter[8]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 0.0f, 0);
+            layer[0]->parameter[9]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 0.0f, 0);
+            layer[0]->parameter[10]->element[0] = Element(ElementOperator::ADD, ElementType::direct, ElementReference::null, 1.0f, 0);
 
+            if(debug){
+                Serial.print("timings.master_speed: ") ; Serial.println(timings.master_speed);
+                Serial.print("timings.ratio[0]: ") ; Serial.println(timings.ratio[0]);
+                Serial.print("timings.ratio[1]: ") ; Serial.println(timings.ratio[1]);
+                Serial.print("timings.ratio[2]: ") ; Serial.println(timings.ratio[2]);
+                Serial.print("timings.offset[0]: ") ; Serial.println(timings.offset[0]);
+                Serial.print("timings.offset[1]: ") ; Serial.println(timings.offset[1]);
+                Serial.print("timings.offset[2]: ") ; Serial.println(timings.offset[2]);
+                Serial.print("timings.offset[3]: ") ; Serial.println(timings.offset[3]);
+            }
+
+        }
+
+        //********************************************************************************************************************
+        // PATTERN GENERATOR *************************************************************************************************
+
+        // each pass through main loop, show the Frame
+        void Pattern() { 
+
+            if (debug) {Serial.println("Pattern start");} 
+
+            getTestInputs();
+
+            //calculate_modulators(timings);
+
+            /*
             //compose a Frame (a set of one or more color-mapped layers)
             for (uint8_t x = 0; x < num_x; x++) {
                 for (uint8_t y = 0; y < num_y; y++) {
@@ -683,10 +700,14 @@ namespace animartrix_detail {
                             createLayer(i, pixelDistance, pixelAngle);
                         }
                     }
-                    composeFrame (x, y);
-                     
+                    
+                    // colormap and blend layer show values for each pixel
+                    composeFrame (x,y);
                 }
             }
+            */
+            if (debug) {Serial.println("Pattern end");}     
+        
         } // Pattern()
 
         //*******************************************************************************
