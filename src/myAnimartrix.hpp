@@ -18,7 +18,7 @@ namespace fl {
     FASTLED_SMART_PTR(Animartrix);
 
     enum AnimartrixAnim {
-        TEST = 0,
+        PATTERN = 0,
         NUM_ANIMATIONS
     };
 
@@ -52,7 +52,7 @@ namespace fl {
             AnimartrixAnim prev_animation = NUM_ANIMATIONS;
             fl::scoped_ptr<FastLEDANIMartRIX> impl;
             CRGB *leds = nullptr; // Only set during draw, then unset back to nullptr.
-            AnimartrixAnim current_animation = TEST;
+            AnimartrixAnim current_animation = PATTERN;
             EOrder color_order = RGB;
 
     };
@@ -128,7 +128,7 @@ namespace fl {
 
 
     static const AnimartrixEntry ANIMATION_TABLE[] = {
-        {TEST, "TEST", &FastLEDANIMartRIX::Test},
+        {PATTERN, "PATTERN", &FastLEDANIMartRIX::Pattern},
     };
 
 

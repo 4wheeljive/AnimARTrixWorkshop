@@ -33,36 +33,57 @@ FL_OPTIMIZATION_LEVEL_O3_BEGIN
 #define PI 3.1415926535897932384626433832795
 #endif
 
-#define num_oscillators 10
+#define timeFactors 10
 
 namespace animartrix_detail {
 
-FASTLED_USING_NAMESPACE
+  FASTLED_USING_NAMESPACE
 
-    struct render_parameters {
-        float center_x = (999 / 2) - 0.5; // center of the matrix
-        float center_y = (999 / 2) - 0.5;
-        float dist, angle;
-        float scale_x = .1; // smaller values = zoom in
-        float scale_y = .1;
-        float scale_z = .1;
-        float offset_x, offset_y, offset_z;
+    class ParameterSet {
+       public: 
+
+        float dist; 
+        float angle;
+        float scale_x;
+        float scale_y;
+        float scale_z;
+        float offset_x;
+        float offset_y;
+        float offset_z;
         float z;
-        float low_limit = 0; // getting contrast by raising the black point
-        float high_limit = 1;
+        float low_limit;
+        float high_limit;
+
+        float* param[11];
+
+        ParameterSet() {
+            // Initialize parameter float array to point to named parameters
+            param[0] = &dist;
+            param[1] = &angle;
+            param[2] = &scale_x;
+            param[3] = &scale_y;
+            param[4] = &scale_z;
+            param[5] = &offset_x;
+            param[6] = &offset_y;
+            param[7] = &offset_z;
+            param[8] = &z;
+            param[9] = &low_limit;
+            param[10] = &high_limit;
+        }
+
     };
 
-    struct oscillators {
+    struct timingMap {
         float master_speed; // global transition speed
-        float offset[num_oscillators];  // oscillators can be shifted by a time offset
-        float ratio[num_oscillators]; // speed ratios for the individual oscillators
+        float offset[timeFactors];  // offsets create initial separation between timeFactors 
+        float ratio[timeFactors]; // ratios determine relationships between timeFactors 
     };
 
     struct modulators {
-        float linear[num_oscillators];      // returns 0 to FLT_MAX
-        float radial[num_oscillators];      // returns 0 to 2*PI
-        float directional[num_oscillators]; // returns -1 to 1
-        float noise_angle[num_oscillators]; // returns 0 to 2*PI
+        float linear[timeFactors];      // returns 0 to FLT_MAX
+        float radial[timeFactors];      // returns 0 to 2*PI
+        float directional[timeFactors]; // returns -1 to 1
+        float noise_angle[timeFactors]; // returns 0 to 2*PI
     };
 
     struct rgb {
@@ -97,21 +118,26 @@ FASTLED_USING_NAMESPACE
 
     class ANIMartRIX {
 
-        public:
-        int num_x; // matrix width
-        int num_y; // matrix height
+      public:
+        uint8_t num_x; // matrix width
+        uint8_t num_y; // matrix height
 
-        float speed_factor = 1; // 0.1 to 10
+        float center_x; 
+        float center_y;
 
+        uint32_t currentTime = 0;
+        
         float radial_filter_radius = 23.0; // on 32x32, use 11 for 16x16
         float radialDimmer = 1;
         float radialFilterFalloff = 1;
 
         bool serpentine;
+        
+        float show[10] = {0,1,2,3,4,5,6,7,8,9};
 
-        render_parameters animation;    // all animation parameters in one place (an instance of the render_parameters structure)
-        oscillators timings;            // all speed settings in one place (an instance of the oscillators structure)
-        modulators move;                // all oscillator-based movers and shifters in one place (an instance of the modulators structure)
+        ParameterSet animation;         // all animation parameters in one place (an instance of the ParameterSet class)
+        timingMap timings;              // all speed settings in one place (an instance of the timingMap structure)
+        modulators move;                // all timing-based movers and shifters in one place (an instance of the modulators structure)
         rgb pixel;                      // an instance of the rgb structure
 
         fl::HeapVector<fl::HeapVector<float>>
@@ -119,77 +145,38 @@ FASTLED_USING_NAMESPACE
         fl::HeapVector<fl::HeapVector<float>>
             distance; // look-up table for polar distances
 
-        unsigned long a, b, c; // for time measurements
-
-        //float show1, show2, show3;
-        float show[10] = {0,1,2,3,4,5,6,7,8,9};
-
         ANIMartRIX() {}
 
-        ANIMartRIX(int w, int h) { this->init(w, h); }
+        ANIMartRIX(uint8_t w, uint8_t h) { this->init(w, h); }
 
         virtual ~ANIMartRIX() {}
 
+        // UTILITY FUNCTIONS ***************************************************
+
         virtual uint16_t xyMap(uint16_t x, uint16_t y) = 0;
 
-        uint32_t currentTime = 0;
         void setTime(uint32_t t) { currentTime = t; }
         uint32_t getTime() { return currentTime ? currentTime : millis(); }
 
-        void init(int w, int h) {
-            animation = render_parameters();
-            timings = oscillators();
-            move = modulators();
-            pixel = rgb();
+        // given a static polar origin we can precalculate the polar coordinates
+        void render_polar_lookup_table(float cx, float cy) {
 
-            this->num_x = w;
-            this->num_y = h;
+            polar_theta.resize(num_x, fl::HeapVector<float>(num_y, 0.0f));
+            distance.resize(num_x, fl::HeapVector<float>(num_y, 0.0f));
 
-            this->radial_filter_radius = std::min(w,h) * 0.65;
-        
-            // precalculate all polar coordinates; polar origin is set to matrix centre
-            render_polar_lookup_table(
-                (num_x / 2) - 0.5,
-                (num_y / 2) - 0.5);  
-            
-            // Set default speed ratio for the oscillators. Not all effects set their own.
-            timings.master_speed = 0.01;
+            for (int xx = 0; xx < num_x; xx++) {
+                for (int yy = 0; yy < num_y; yy++) {
+
+                    float dx = xx - cx;
+                    float dy = yy - cy;
+
+                    distance[xx][yy] = hypotf(dx, dy);
+                    polar_theta[xx][yy] = atan2f(dy, dx);
+                }
+            }
         }
 
-        void setSpeedFactor(float speed) { this->speed_factor = speed; }
-
-        float radialFilterFactor( float radius, float distance, float falloff) {
-            if (distance >= radius) return 0.0f;
-            float factor = 1.0f - (distance / radius);
-            return powf(factor, falloff);
-        }
-
-        // Dynamic darkening methods *************************************
-
-        float subtract(float &a, float &b) { return a - b; }
-
-        float multiply(float &a, float &b) { return a * b / 255.f; }
-
-        // makes low brightness darker
-        // sets the black point high = more contrast
-        // animation.low_limit should be 0 for best results
-        float colorburn(float &a, float &b) {
-            return (1 - ((1 - a / 255.f) / (b / 255.f))) * 255.f;
-        }
-
-        // Dynamic brightening methods **********************************
-
-        float add(float &a, float &b) { return a + b; }
-
-        // makes bright even brighter
-        // reduces contrast
-        float screen(float &a, float &b) {
-            return (1 - (1 - a / 255.f) * (1 - b / 255.f)) * 255.f;
-        }
-
-        float colordodge(float &a, float &b) { return (a / (255.f - b)) * 255.f; }
-
-        //***************************************************************
+        // Noise engine **********************************************
         
         float fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
         float lerp(float t, float a, float b) { return a + t * (b - a); }
@@ -233,92 +220,80 @@ FASTLED_USING_NAMESPACE
 
         //***************************************************************
 
-        void calculate_oscillators(oscillators &timings) {
+        // float mapping maintaining 32 bit precision
+        // we keep values with high resolution for potential later usage
+        float map_float(float x, float in_min, float in_max, float out_min,
+                        float out_max) {
 
-            // global animation speed
-            double runtime = getTime() * timings.master_speed * speed_factor; 
+            float result =
+                (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+            if (result < out_min)
+                result = out_min;
+            if (result > out_max)
+                result = out_max;
 
-            for (int i = 0; i < num_oscillators; i++) {
+            return result;
+        }
 
-                // continously rising offsets, returns 0 to max_float
+        float radialFilterFactor( float radius, float distance, float falloff) {
+            if (distance >= radius) return 0.0f;
+            float factor = 1.0f - (distance / radius);
+            return powf(factor, falloff);
+        }
+
+        // OPERATING FUNCTIONS ***********************************************************
+        
+        void init(uint8_t w, uint8_t h) {
+            animation = ParameterSet();
+            timings = timingMap();
+            move = modulators();
+            pixel = rgb();
+
+            this->num_x = w;
+            this->num_y = h;
+
+            this->radial_filter_radius = std::min(w,h) * 0.65;
+        
+            // precalculate all polar coordinates; polar origin is set to matrix center
+            render_polar_lookup_table(
+                (num_x / 2) - 0.5,
+                (num_y / 2) - 0.5);  
+
+        } // init()
+
+        void calculate_modulators(timingMap &timings) {
+
+            double runtime = getTime() * timings.master_speed * cSpeed; 
+
+            for (int i = 0; i < timeFactors; i++) {
+
+                // continously rising value, returns 0 to max_float
                 move.linear[i] = 
                     (runtime + timings.offset[i]) * timings.ratio[i];
 
-                // angle offsets for continous rotation, returns 0 to 2 * PI
+                // angle values for continous rotation, returns 0 to 2 * PI
                 move.radial[i] = 
                     fmodf(move.linear[i], 2 * PI); 
 
-                // directional offsets or factors, returns -1 to 1
+                // directional values, returns -1 to 1
                 move.directional[i] = 
                     FL_SIN_F(move.radial[i]); 
 
-                // noise based angle offset, returns 0 to 2 * PI
+                // noise-based angle adjustment value, returns 0 to 2 * PI
                 move.noise_angle[i] =
                     PI * (1 + pnoise(move.linear[i], 0, 0));
             
             }
         }
-    
-        //***************************************************************
-        void run_default_oscillators(float master_speed ) {
-                timings.master_speed = master_speed;
 
-                // speed ratios for the oscillators, higher values = faster transitions
-                timings.ratio[0] = 1; 
-                timings.ratio[1] = 2;
-                timings.ratio[2] = 3;
-                timings.ratio[3] = 4;
-                timings.ratio[4] = 5;
-                timings.ratio[5] = 6;
-                timings.ratio[6] = 7;
-                timings.ratio[7] = 8;
-                timings.ratio[8] = 9;
-                timings.ratio[9] = 10;
-
-                timings.offset[0] = 000;
-                timings.offset[1] = 100;
-                timings.offset[2] = 200;
-                timings.offset[3] = 300;
-                timings.offset[4] = 400;
-                timings.offset[5] = 500;
-                timings.offset[6] = 600;
-                timings.offset[7] = 700;
-                timings.offset[8] = 800;
-                timings.offset[9] = 900;
-
-                calculate_oscillators(timings);
-            }
-
-        //***************************************************************
-
-        // Convert the 2 polar coordinates back to cartesian ones & also apply all
-        // 3d transitions. Calculate the noise value at this point based on the 5
-        // dimensional manipulation of the underlaying coordinates.
-
-    
-        // an instance of the render_parameters structure called animation passes a layer's collection of parameters through
-        // the render_value function    
-
-        // returns a float between 0 and 255 that will be translated into the r, g and/or b value of a single pixel, 
-        // depending on how colors are mapped 
-        
-        // EXAMPLE:  float show1 = render_value(animation)
-
-        // Ideally this should only be used for Layers that have a rotational component. Otherwise, there is no need
-        // for any polar/cartesian conversions
-
-        // An initial approach for me could be to have each Layer instance result in xxx
-        // What my Layers should do is map my "parameter factory" values to the animation/render_parameters structure           
-
-
-        float render_value(render_parameters &animation) {
+        float render_value(ParameterSet &animation) {
 
             // convert polar coordinates back to cartesian ones
 
-            float newx = (animation.offset_x + animation.center_x -
+            float newx = (animation.offset_x + center_x -
                         (FL_COS_F(animation.angle) * animation.dist)) *
                         animation.scale_x;
-            float newy = (animation.offset_y + animation.center_y -
+            float newy = (animation.offset_y + center_y -
                         (FL_SIN_F(animation.angle) * animation.dist)) *
                         animation.scale_y;
             float newz = (animation.offset_z + animation.z) * animation.scale_z;
@@ -337,42 +312,7 @@ FASTLED_USING_NAMESPACE
                         animation.high_limit, 0, 255);
 
             return scaled_noise_value;
-        }
-
-        // given a static polar origin we can precalculate the polar coordinates
-        
-        void render_polar_lookup_table(float cx, float cy) {
-
-            polar_theta.resize(num_x, fl::HeapVector<float>(num_y, 0.0f));
-            distance.resize(num_x, fl::HeapVector<float>(num_y, 0.0f));
-
-            for (int xx = 0; xx < num_x; xx++) {
-                for (int yy = 0; yy < num_y; yy++) {
-
-                    float dx = xx - cx;
-                    float dy = yy - cy;
-
-                    distance[xx][yy] = hypotf(dx, dy);
-                    polar_theta[xx][yy] = atan2f(dy, dx);
-                }
-            }
-        }
-
-        // float mapping maintaining 32 bit precision
-        // we keep values with high resolution for potential later usage
-
-        float map_float(float x, float in_min, float in_max, float out_min,
-                        float out_max) {
-
-            float result =
-                (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-            if (result < out_min)
-                result = out_min;
-            if (result > out_max)
-                result = out_max;
-
-            return result;
-        }
+        } // render_value
 
         rgb rgb_sanity_check(rgb &pixel) {
 
@@ -393,79 +333,68 @@ FASTLED_USING_NAMESPACE
                 pixel.blue = 255;
 
             return pixel;
-        }   //*******************************************&&&&&&&&&&&&&&&&&&&&&&&&& */
+        }   
 
         virtual void setPixelColorInternal(int x, int y, rgb pixel) = 0;
 
 
-
         //********************************************************************************************************************
-        // LAYERS ************************************************************************************************************
+        // COMPONENT ARCHITECTURE ********************************************************************************************
 
         //**************************************************************************************** 
-        // ADJUSTMENT STRUCTURE 
+        // ELEMENT STRUCTURE 
+        // Elements are instructions for how to calculate a Parameter
 
-        // Enumeration for adjustment operators
-        enum class AdjustmentOperator {
-            ADD,      // +
+        // Elements include an operator, a type, a optional reference, an optional value, and an optional index
+        // reference is used to identify which variable or array to reference
+        // value is used to provide a float for a directly-entered constant
+        // index is used for the array variables (i.e., modulators)  
+
+
+        enum class ElementOperator {
+            ADD = 0,      // +
             SUBTRACT, // -
             MULTIPLY,  // *
             DIVIDE      // /
         };
 
-        // Core variant type - can be a float value, pointer to float, or pointer to float array
-        using CoreVariant = std::variant<float, float*, float**, std::function<float()>>;
-                
-        // Adjustment structure with core, optional index, and operator
-        struct Adjustment {
-            CoreVariant core;
-            uint8_t index = 0;           // Optional index for array variables
-            AdjustmentOperator op = AdjustmentOperator::ADD;  // Default to addition
-            
-            // Constructor with float core
-            Adjustment(float value, AdjustmentOperator operation = AdjustmentOperator::ADD)
-                : core(value), op(operation) {}
-            
-            // Constructor with pointer to float variable
-            Adjustment(float* variable, AdjustmentOperator operation = AdjustmentOperator::ADD)
-                : core(variable), op(operation) {}
-            
-            // Constructor with pointer to float array and index
-            Adjustment(float* array, uint8_t arrayIndex, AdjustmentOperator operation = AdjustmentOperator::ADD)
-                : core(array), index(arrayIndex), op(operation) {}
-            
-           // Get the core value as float
-            float getCoreValue() const {
-                return std::visit([this](const auto& value) -> float {
-                    using T = std::decay_t<decltype(value)>;
-                    
-                    if constexpr (std::is_same_v<T, float>) {
-                        // Direct float value
-                        return value;
-                    }
-                    else if constexpr (std::is_same_v<T, float*>) {
-                        // Pointer to float or float array
-                        if (value != nullptr) {
-                            return value[index]; // Works for both single variable (index=0) and arrays
-                        }
-                        return 0.0f;
-                    }
-                    else if constexpr (std::is_same_v<T, float**>) {
-                        // Pointer to pointer (for more complex scenarios)
-                        if (value != nullptr && *value != nullptr) {
-                            return (*value)[index];
-                        }
-                        return 0.0f;
-                    }
+        enum class ElementType {
+            direct = 0,
+            variable,
+            array
+        };
 
-                    else {
-                        return 0.0f; // Fallback
-                    }
-                }, core);
-            }
+        enum class ElementReference {
+            moveLinear = 0,
+            moveRadial,
+            moveDirectional,
+            moveNoiseAngle,
+            pixelDistance,
+            pixelAngle,
+            cZoom,
+            cTwist
+        };
 
-        };// struct Adjustment
+        class Element {
+          
+          public:  
+          
+            ElementOperator op = ElementOperator::ADD;  // Default to addition
+            ElementType type = ElementType::direct; // Default to direct
+            ElementReference ref = ElementReference::moveLinear; // default to moveLinear
+            float value = 0.0f; // default to 0
+            uint8_t index = 0; // Optional index for array variables 
+            
+            // Constructor
+            Element(    ElementOperator operation = ElementOperator::ADD, 
+                        ElementType type = ElementType::direct,
+                        ElementReference ref = ElementReference::moveLinear,
+                        float value,
+                        uint8_t index = 0
+                    )
+                        : op(operation), type(type), ref(ref), value(value), index(index)  {}
 
+        };// class Element
                                         
         //**************************************************************************************** 
         // PARAMETER CLASS - each parameter returns a float
@@ -473,44 +402,44 @@ FASTLED_USING_NAMESPACE
         class Parameter {
 
           public:
-            //BaseVariant base;
-            std::vector<Adjustment> adjustment;
+
+            std::vector<Element> element;
 
             // Default constructor - defaults to 0.0f
-            Parameter() 
-                : adjustment(0.0f) {}
-            
-            // Constructor one or more adjustments
-            Parameter(const std::vector<Adjustment>& adjs)
-                : adjustment(adjs) {}
+            Parameter() {} 
+            //    : element(0.0f, ElementOperator::ADD) {}
+
+            // Constructor FOR one or more elements
+            Parameter(const std::vector<Element>& adjs)
+                : element(adjs) {}
 
             float getValue() const {
                             
-                // Start with core value
-                float result = adjustment[0].getCoreValue();
+                // Start with element[0] core value
+                float result = element[0].getCoreValue();
 
                 // Negate if indicated 
-                if (adjustment[0].op == AdjustmentOperator::SUBTRACT) {
+                if (element[0].op == ElementOperator::SUBTRACT) {
                     result = -result;  
                 }
 
-                // Apply adjustments sequentially
+                // Apply additional elements sequentially
                 
-                for (size_t i = 0; i < adjustment.size(); i++) {
+                for (size_t i = 1; i < element.size(); i++) {
                     
-                    float adjValue = adjustment[i].getCoreValue(); // getCoreValue includes index if present
-         
-                    switch (adjustment[i].op) {
-                        case AdjustmentOperator::ADD:
+                    float adjValue = element[i].getCoreValue(); // getCoreValue includes index if present
+                                        
+                    switch (element[i].op) {
+                        case ElementOperator::ADD:
                             result += adjValue;
                             break;
-                        case AdjustmentOperator::SUBTRACT:
+                        case ElementOperator::SUBTRACT:
                             result -= adjValue;
                             break;
-                        case AdjustmentOperator::MULTIPLY:
+                        case ElementOperator::MULTIPLY:
                             result *= adjValue;
                             break;
-                        case AdjustmentOperator::DIVIDE:
+                        case ElementOperator::DIVIDE:
                             result /= adjValue;
                             break;
                     }
@@ -518,27 +447,14 @@ FASTLED_USING_NAMESPACE
                 
                 return result;
             }
+                        
+            bool isDynamic() const {
+                for (size_t i = 0; i < element.size(); i++) {
+                    if (!element[i].isStatic()) {return true;}
+                }
+                return false;
+            }
 
-            /*
-            // Utility methods
-            void setBase(float newBase) { base = newBase; }
-            void setBase(float* newBasePtr) { base = newBasePtr; }
-            void setBase(std::function<float()> func) { base = func; }
-            
-            // Type checking methods
-            bool isBaseDirectValue() const {
-                return std::holds_alternative<float>(base);
-            }
-            
-            bool isBasePointer() const {
-                return std::holds_alternative<float*>(base);
-            }
-            
-            bool isBaseFunction() const {
-                return std::holds_alternative<std::function<float()>>(base);
-            }
-            */
-            
         }; // Parameter class
                 
         //**************************************************************************************** 
@@ -606,6 +522,7 @@ FASTLED_USING_NAMESPACE
                 }
                 return 0.0f;
             }
+
         }; // Layer class
 
         //************************************************************
@@ -618,193 +535,159 @@ FASTLED_USING_NAMESPACE
                 
         Layer* layer[5] = {&layer1, &layer2, &layer3, &layer4, &layer5};
 
-
-        float adjDistance(uint8_t i, float pixelDistance) {
-            
-            if (true /*defaultCoreVal*/ ) { return pixelDistance;}
-   
-            else {return layer[i]->parameter[0]->getValue(); 
-            
-            
-
-            }
-
-        }
-
-        float adjAngle(uint8_t i, float pixelAngle, float pixelDistance) {
-
-            // start with the default base
-            float defaultBase = pixelAngle;
-
-            if (false) {return defaultBase;}      // if !activeAdjustments[layer]
-
-            else {  //apply adjustments
-
-                float result = defaultBase 
-                    * 3                     // adjustment 1
-                    + move.radial[0]        // adjustment 2
-                    - pixelDistance;        // adjustment 3
-                                
-                return result;
-
-            }
-        }
-       
-        float currentScale_x(uint8_t i, float pixelDistance) {
-            
-            void postValue() {
-             
-            }
-                        
-            // if dynamic
-                 layer[i]->current[2] = layer[i]->parameter[2]->getValue();;
-
-            //else if static
-            
-                //if hasChanged == true
-                 layer[i]->current[2] = layer[i]->parameter[2]->getValue();;
-                // hasChanged = false;
-
-
-
-
-
-
-
-
-        };
-
-        float currentScale_y(uint8_t i, float pixelDistance) {
-            return 0.1f;
-        };
-
-        float currentScale_z(uint8_t i, float pixelDistance) {
-            return 0.1f;
-        };
-
-        float currentOffset_x(uint8_t i, float pixelDistance) {
-           
-            float defaultBase = 0.0f;
-            if (false) {return defaultBase;}
-
-            else {
-                float result = move.linear[0];
-                return result;
-            }
-        };
-       
-        float currentOffset_y(uint8_t i, float pixelDistance) {
-            return 0.0f;
-        };
-       
-        float currentOffset_z(uint8_t i, float pixelDistance) {
-            return 0.0f;
-        };
-       
-        float currentZ(uint8_t i, float pixelDistance) {
-            return 0.0f;
-        };
+         //************************************************************
         
-        float currentLow_Limit(uint8_t i) { return 0.0f; };
-        float currentHigh_Limit(uint8_t i) { return 1.0f; };
-
-
-        // *************** USE BLE HANDLERS TO PUSH CHANGES ONLY WHEN NEEDED
-
-        // BLE - Set variable values directly? Or send instruction messages?
-
-            // special/dedicated characteristic?
-
-            // can moderate the adjustment count only when needed 
-
-            // all dynamic adjustments point directly to the underlying timer; they don't pass values from one place to another
-
-
-            // handling some ble messages will include setting certain bools (e.g., hasChanged, defaultVal)
-
-    
-        //********************************************************************************************************************
-        // EFFECTS ***********************************************************************************************************
-
-        void Test() {
-            //Serial.println("Test started");
+        void createLayer(uint8_t i, float pixelDistance, float pixelAngle) {
+        
+            //for each pixel, generate a show[i] value for the current layer[i]
+                
+            for (uint8_t j = 0; j < 11; j++) { // for each parameter
             
-            int x = 0, y = 0;
+                float result = 0.0f;
+                float base;
 
+                for (uint8_t k = 0; k < layer[i]->parameter[j]->element.size(); k++) { // for each element
+                
+                    switch (layer[i]->parameter[j]->element[k].type) { // get the base value or reference variable
+                        
+                        case ElementType::direct:
+                            float base = layer[i]->parameter[j]->element[k].value;
+                            break;
+                        
+                        case ElementType::variable:
+
+                            switch (layer[i]->parameter[j]->element[k].ref) {
+
+                                case ElementReference::pixelDistance:
+                                    float base = pixelDistance;
+                                    break;
+
+                                case ElementReference::pixelAngle:
+                                    float base = pixelAngle;
+                                    break;
+                            }
+                        
+                        case ElementType::array:
+
+                            switch (layer[i]->parameter[j]->element[k].ref) {
+
+                                case ElementReference::moveLinear:
+                                    uint8_t index = layer[i]->parameter[j]->element[k].index;
+                                    float base = move.linear[index];
+                                    break;
+
+                                case ElementReference::moveRadial:
+                                    uint8_t index = layer[i]->parameter[j]->element[k].index;
+                                    float base = move.radial[index];
+                                    break;
+
+                                case ElementReference::moveDirectional:
+                                    uint8_t index = layer[i]->parameter[j]->element[k].index;
+                                    float base = move.directional[index];
+                                    break;
+
+                                case ElementReference::moveNoiseAngle:
+                                    uint8_t index = layer[i]->parameter[j]->element[k].index;
+                                    float base = move.noise_angle[index];
+                                    break;
+                            }
+                    }
+                    
+                // if the parameter has only one element [0])
+                if (layer[i]->parameter[j]->element.size() == 1) {
+                    
+                    if (layer[i]->parameter[j]->element[0].op == ElementOperator::SUBTRACT) {
+                        result = -base;
+                    }
+                    
+                    else {result = base;}
+                    
+                }
+                                
+                else {
+                
+                    switch (layer[i]->parameter[j]->element[k].op) {
+                        case ElementOperator::ADD:
+                            result += base;
+                            break;
+                        case ElementOperator::SUBTRACT:
+                            result -= base;
+                            break;
+                        case ElementOperator::MULTIPLY:
+                            result *= base;
+                            break;
+                        case ElementOperator::DIVIDE:
+                            result /= base;
+                            break;
+                    }
+                }
+
+                animation.layer[i]->param[j] = result;    
+        
+        }
+            
+               // creating a layer means running an "animation" through "render_value(animation)" 
+            // i.e., applying set of 11 Parameters to each pixel
+            // result is a show[i] for layer[i] 
+        
+            //show[i] = render_value(animation);
+        
+        }
+        
+        void composeFrame( uint8_t x, uint8_t y) {
+
+            // composing a Frame means setting the RGB value for each pixel through a specified mapping/application of 
+            // Layer values to each color channel
+
+            pixel.red = show[0];
+            pixel.green = show[0]/2;
+            pixel.blue = show[0]/3;
+
+            pixel = rgb_sanity_check(pixel);
+            
+            setPixelColorInternal(x, y, pixel);
+
+        }
+
+
+        //********************************************************************************************************************
+        // PATTERN GENERATOR *************************************************************************************************
+
+        // each pass through main loop, show the Frame
+        
+        void Pattern() { 
+          
             timings.master_speed = 0.01;
+            
             timings.ratio[0] = 0.1;
             timings.ratio[1] = 0.13;
             timings.ratio[2] = 0.16;
       
+            timings.offset[0] = 0;
             timings.offset[1] = 10;
             timings.offset[2] = 20;
             timings.offset[3] = 30;
+            
+            calculate_modulators(timings);
 
-            calculate_oscillators(timings);
-
-            //draw a frame
-            for (x = 0; x < num_x; x++) {
-                for (y = 0; y < num_y; y++) {
+            //compose a Frame (a set of one or more color-mapped layers)
+            for (uint8_t x = 0; x < num_x; x++) {
+                for (uint8_t y = 0; y < num_y; y++) {
                     
-                    // draw layers 
-                                        
-                    for (uint8_t i = 0; i < 1 ; i++) {
-                
-                        //if(layer[i]->layerActive) {
-                        if(true) {
-
-                            float pixelDistance = distance[x][y];
-                            float pixelAngle = polar_theta[x][y];
-                            
-                            animation.dist = adjDistance(i, pixelDistance); 
-                            animation.angle = adjAngle(i, pixelAngle, pixelDistance);
-						    animation.scale_x = currentScale_x(i, pixelDistance);
-							animation.scale_y = currentScale_y(i, pixelDistance);
-                            animation.scale_z = currentScale_z(i, pixelDistance);
-                            animation.offset_x = currentOffset_x(i, pixelDistance);
-                            animation.offset_y = currentOffset_y(i, pixelDistance);
-                            animation.offset_z = currentOffset_z(i, pixelDistance);
-                            animation.z = currentZ(i, pixelDistance);
-                            animation.low_limit = currentLow_Limit(i);
-                            animation.high_limit = currentHigh_Limit(i);
-                            
-                            show[i] = render_value(animation);
-                            //Serial.print("Show: ");
-                            //Serial.println(show[i]);
-
+                    float pixelDistance = distance[x][y];
+                    float pixelAngle = polar_theta[x][y];
+                    
+                    // draw Layers (sets of 0-255 values for each pixel in xy matrix)
+                    for (uint8_t i = 0; i < 5 ; i++) {
+                        if(layer[i]->layerActive) {
+                            createLayer(i, pixelDistance, pixelAngle);
                         }
-                       
                     }
-                        
-                    /*
-					animation.dist = distance[x][y] / 4 ;
-					animation.angle =
-						3 * polar_theta[x][y] 
-						+ move.radial[0] 
-						- distance[x][y]; 
-					animation.scale_z = .1;
-					animation.scale_y = .1 ;
-					animation.scale_x = .1 ;
-					animation.offset_x = move.linear[0];
-					animation.offset_y = 0;
-					animation.offset_z = 0;
-					animation.z = 0;
-					
-                    show[0] = render_value(animation) ;
-                    */
-                  
-                    pixel.red = show[0];
-                    pixel.green = show[0]/2;
-                    pixel.blue = show[0]/3;
-
-                    pixel = rgb_sanity_check(pixel);
-                    setPixelColorInternal(x, y, pixel);
-
+                    composeFrame (x, y);
+                     
                 }
             }
-            
-            //Serial.println("Test completed");
-        } // Test()
+        } // Pattern()
 
         //*******************************************************************************
 
