@@ -17,8 +17,8 @@
 
 //*********************************************
 
-//.#define BIG_BOARD
-#undef BIG_BOARD
+#define BIG_BOARD
+//#undef BIG_BOARD
 
 #define CUSTOM_MAP
 //#undef CUSTOM_MAP
